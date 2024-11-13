@@ -3,7 +3,6 @@
 
 #include <stdio.h>
 #include <stdint.h>
-#include <utility>
 #include <Xinput.h>
 
 #include "patcher.h"
@@ -46,7 +45,10 @@ struct sAddresses
 	static uintptr_t HackPlayerOptionsSaveData;
 	static uintptr_t ClassSerializer_EndClass;
 	static char* g_byte_IsFullscreen;
-	static uintptr_t _BorderlessWindow_Zeromemory_D3dPresentParameters;
+	/*
+	AC2 uplay: void __thiscall Init_Direct3dDevice(void *this, HWND param_1, int *param_2)
+	*/
+	static uintptr_t _BorderlessWindow_Engine_InitDirect3DDevice;
 };
 
 
@@ -71,7 +73,7 @@ uintptr_t sAddresses::_AddHWGraphicObjectInstances_checkIsCharacter_jumpOut = 0;
 uintptr_t sAddresses::HackPlayerOptionsSaveData = 0;
 uintptr_t sAddresses::ClassSerializer_EndClass = 0;
 char* sAddresses::g_byte_IsFullscreen = 0;
-uintptr_t sAddresses::_BorderlessWindow_Zeromemory_D3dPresentParameters = 0;
+uintptr_t sAddresses::_BorderlessWindow_Engine_InitDirect3DDevice = 0;
 
 int NEEDED_KEYBOARD_SET = 0;
 
@@ -422,36 +424,6 @@ _checkIsCharacter_out:
 	}
 }
 
-HWND FindTopWindow(DWORD pid)
-{
-	std::pair<HWND, DWORD> params = { 0, pid };
-
-	// Enumerate the windows using a lambda to process each window
-	BOOL bResult = EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL
-		{
-			auto pParams = (std::pair<HWND, DWORD>*)(lParam);
-
-			DWORD processId;
-			if (GetWindowThreadProcessId(hwnd, &processId) && processId == pParams->second)
-			{
-				// Stop enumerating
-				SetLastError(-1);
-				pParams->first = hwnd;
-				return FALSE;
-			}
-
-			// Continue enumerating
-			return TRUE;
-		}, (LPARAM)&params);
-
-	if (!bResult && GetLastError() == -1 && params.first)
-	{
-		return params.first;
-	}
-
-	return 0;
-}
-
 void MakeBorderlessWindow(HWND hwnd) {
 	auto style = GetWindowLongPtr(hwnd, GWL_STYLE);
 	auto exStyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
@@ -478,16 +450,19 @@ void MakeBorderlessWindow(HWND hwnd) {
 	SetWindowLongPtr(hwnd, GWL_EXSTYLE, exStyle);
 }
 
-void __cdecl Hook_Memset_Set_WindowedMode(void* _this, int offset, size_t length) {
+typedef void (__thiscall *Delegate_BorderlessWindow_InitDirect3DDevice)(void*, HWND, int*);
+static Delegate_BorderlessWindow_InitDirect3DDevice Ivk_Delegate_BorderlessWindow_InitDirect3DDevice;
+
+void __fastcall Hook_BorderlessWindow_InitDirect3DDevice(void* _this, void*, HWND hwnd, int* extra) {
 	*sAddresses::g_byte_IsFullscreen = 0;
 
 	auto width = GetSystemMetrics(SM_CXSCREEN);
 	auto height = GetSystemMetrics(SM_CYSCREEN);
 
-	auto hwnd = FindTopWindow(GetCurrentProcessId());
-
 	MakeBorderlessWindow(hwnd);
 	SetWindowPos(hwnd, HWND_TOP, 0, 0, width, height, SWP_SHOWWINDOW | SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSENDCHANGING);
+
+	Ivk_Delegate_BorderlessWindow_InitDirect3DDevice(_this, hwnd, extra);
 }
 
 void patch()
@@ -505,7 +480,7 @@ void patch()
 	//Patch<uint32_t>(0x15D71F6, 71); // depth format
 
 	if (get_private_profile_bool("BorderlessWindow", TRUE)) {
-		InjectHook(sAddresses::_BorderlessWindow_Zeromemory_D3dPresentParameters, &Hook_Memset_Set_WindowedMode);
+		InterceptCall(&Ivk_Delegate_BorderlessWindow_InitDirect3DDevice, &Hook_BorderlessWindow_InitDirect3DDevice, sAddresses::_BorderlessWindow_Engine_InitDirect3DDevice);
 	}
 
 	if (get_private_profile_bool("ImproveDrawDistance", TRUE))
@@ -587,7 +562,7 @@ void InitAddresses(eExeVersion exeVersion)
 		sAddresses::ClassSerializer_EndClass = 0x9FB540;
 		// TODO:
 		//sAddresses::g_byte_IsFullscreen = 0x02210a73;
-		//sAddresses::_BorderlessWindow_Zeromemory_D3dPresentParameters = 0x015d7176;
+		//sAddresses::_BorderlessWindow_Engine_InitDirect3DDevice = 0x015d76d7;
 
 		ac_getNewDescriptor = (void* (__cdecl*)(uint32_t, uint32_t, uint32_t))0x9D9030;
 		ac_getDeleteDescriptor = (uint32_t(__thiscall*)(void*, void*))0x4236A0;
@@ -621,7 +596,7 @@ void InitAddresses(eExeVersion exeVersion)
 		sAddresses::HackPlayerOptionsSaveData = 0xAD4723;
 		sAddresses::ClassSerializer_EndClass = 0x14BEB50;
 		sAddresses::g_byte_IsFullscreen = (char*)0x02210a73;
-		sAddresses::_BorderlessWindow_Zeromemory_D3dPresentParameters = 0x015d7176;
+		sAddresses::_BorderlessWindow_Engine_InitDirect3DDevice = 0x015d76d7;
 
 		ac_getNewDescriptor = (void* (__cdecl*)(uint32_t, uint32_t, uint32_t))0x149CAD0;
 		ac_getDeleteDescriptor = (uint32_t(__thiscall*)(void*, void*))0x1466AE0;
